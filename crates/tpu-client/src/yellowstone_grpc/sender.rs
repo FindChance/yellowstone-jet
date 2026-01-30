@@ -438,6 +438,10 @@ impl Blocklist for ShieldBlockList<'_> {
 }
 
 impl YellowstoneTpuSender {
+    /// new YellowstoneTpuSender
+    pub fn new(base_tpu_sender: TpuSender, atomic_slot_tracker: Arc<AtomicSlotTracker>, leader_schedule: ManagedLeaderSchedule )-> Self {
+        Self { base_tpu_sender, atomic_slot_tracker, leader_schedule }
+    }
     ///
     /// Sends a transaction to the specified destinations.
     ///
