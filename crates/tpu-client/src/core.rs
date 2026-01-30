@@ -997,9 +997,13 @@ impl ConnectionEvictionStrategy for StakeBasedEvictionStrategy {
             .iter()
             .filter(|(_, peer)| !already_evicting.contains(peer))
             .filter(|(_, peer)| {
-                let last_usage = usage_table.get(peer).expect("missing last activity");
-                let elapsed = now.saturating_duration_since(*last_usage);
-                elapsed >= self.peer_idle_eviction_grace_period
+                match usage_table.get(peer) {
+                    Some(last_usage) => {
+                        let elapsed = now.saturating_duration_since(*last_usage);
+                        elapsed >= self.peer_idle_eviction_grace_period
+                    }
+                    None => true, // 没有记录？直接判定为“可以驱逐”
+                }
             })
             .take(plan_ahead_size)
             .map(|(_, peer)| peer)
@@ -1123,7 +1127,17 @@ where
         };
 
         let service = Arc::clone(&self.leader_tpu_info_service);
-        let endpoint_idx = self.get_least_used_endpoint();
+        let endpoint_idx = match self.get_least_used_endpoint() {
+            Some(idx) => idx,
+            None => {
+                // 没有任何端点可用（列表为空），无法建立连接，记录错误并跳过
+                tracing::error!(
+                    "Failed to spawn connection: no endpoints available for peer {}", 
+                    remote_peer_identity
+                );
+                return; 
+            }
+        };
         let cert = Arc::clone(&self.client_certificate);
         let max_idle_timeout = self.config.max_idle_timeout;
         let fut = ConnectingTask {
@@ -1161,7 +1175,7 @@ where
         self.connecting_meta.insert(abort_handle.id(), meta);
     }
 
-    fn get_least_used_endpoint(&mut self) -> usize {
+    fn get_least_used_endpoint(&mut self) -> Option<usize> {
         self.endpoints_usage
             .iter()
             .enumerate()
@@ -1169,7 +1183,6 @@ where
                 usage.connected_remote_peers.len() + usage.connecting_remote_peers.len()
             })
             .map(|(idx, _)| idx)
-            .expect("At least one endpoint should be available")
     }
 
     ///
