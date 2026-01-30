@@ -223,11 +223,14 @@ async fn auto_leader_schedule_loop(
             }
         }
 
-        let epoch = rpc_client
-            .get_epoch_info()
-            .await
-            .expect("rpc_client.get_epoch_info")
-            .epoch;
+        // 1. 获取 Epoch Info (移除 expect)
+        let epoch = match rpc_client.get_epoch_info().await {
+            Ok(info) => info.epoch,
+            Err(e) => {
+                tracing::error!("RPC Error (get_epoch_info): {:?}. Retrying next interval.", e);
+                continue; // 跳过本次循环，等待下个 interval
+            }
+        };
 
         if epoch == current_epoch {
             tracing::debug!("AutoLeaderSchedule: still in epoch {}", current_epoch);
@@ -235,17 +238,14 @@ async fn auto_leader_schedule_loop(
             // Only fetch the next schedule if we're still in the same epoch
             // Making sure we have the freshest schedule ready when we transition
             let next_epoch_first_slot = (current_epoch + 1) * DEFAULT_SLOTS_PER_EPOCH;
-            let next_schedule = rpc_client
-                .get_unnested_leader_schedule(Some(next_epoch_first_slot))
-                .await
-                .expect("rpc_client.get_unnested_leader_schedule next")
-                .expect("None next schedule");
-            {
-                let mut schedules = shared.write().expect("write");
-                schedules.double_buffer[1] = next_schedule;
+            match rpc_client.get_unnested_leader_schedule(Some(next_epoch_first_slot)).await {
+                Ok(Some(next_schedule)) => {
+                    let mut schedules = shared.write().expect("write");
+                    schedules.double_buffer[1] = next_schedule;
+                }
+                Ok(None) => tracing::warn!("Next epoch schedule is not yet available"),
+                Err(e) => tracing::error!("RPC Error (fetch next schedule): {:?}", e),
             }
-
-            continue;
         } else {
             tracing::info!(
                 "AutoLeaderSchedule: detected epoch change {} -> {}",
@@ -262,18 +262,17 @@ async fn auto_leader_schedule_loop(
             let next_schedule_fut =
                 rpc_client.get_unnested_leader_schedule(Some(next_epoch_first_slot));
 
-            let (current_schedule, next_schedule) =
+            let (current_schedule_res, next_schedule_res) =
                 join(current_schedule_fut, next_schedule_fut).await;
-            let current_schedule = current_schedule
-                .expect("rpc_client.get_unnested_leader_schedule current")
-                .expect("None current schedule");
-            let next_schedule = next_schedule
-                .expect("rpc_client.get_unnested_leader_schedule next")
-                .expect("None next schedule");
 
-            {
-                let mut schedules = shared.write().expect("write");
-                schedules.double_buffer = [current_schedule, next_schedule];
+            match (current_schedule_res, next_schedule_res) {
+                (Ok(Some(current_schedule)), Ok(Some(next_schedule))) => {
+                    let mut schedules = shared.write().expect("write");
+                    schedules.double_buffer = [current_schedule, next_schedule];
+                }
+                _ => {
+                    tracing::error!("Failed to fetch schedules during epoch transition. Will retry.");
+                }
             }
         }
     }
