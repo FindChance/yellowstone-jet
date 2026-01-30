@@ -23,7 +23,7 @@ pub struct PoisonError(u64);
 
 impl AtomicSlotTracker {
     #[allow(dead_code)]
-    pub(crate) fn new(initial_slot: u64) -> Self {
+    pub fn new(initial_slot: u64) -> Self {
         Self {
             slot: AtomicU64::new(initial_slot),
             closed: AtomicBool::new(false),
