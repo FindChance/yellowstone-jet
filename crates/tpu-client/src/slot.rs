@@ -44,4 +44,21 @@ impl AtomicSlotTracker {
             Ok(slot)
         }
     }
+
+    /// Load the current slot.
+    ///
+    /// Returns an error if the slot tracker is poisoned.
+    ///
+    pub fn store(&self, slot: u64) -> Result<(), PoisonError> {
+        let is_closed = self.closed.load(std::sync::atomic::Ordering::Acquire);
+        let current_slot = self.slot.load(std::sync::atomic::Ordering::Relaxed);
+        if is_closed {
+            Err(PoisonError(slot))
+        } else {
+            if current_slot < slot {
+                self.slot.store(slot, std::sync::atomic::Ordering::Relaxed);
+            }
+            Ok(())
+        }
+    }
 }
